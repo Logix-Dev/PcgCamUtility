@@ -3,20 +3,28 @@
     File: win32_pcg_cam.cpp
     Date: 02/05/2022
     Creator: Logix
-    Version: 1
+    Version: 1.1
     ==========================================================================
 
     This is a simple utility program to select a region of the screen with your cursor
     and receive the edge-relative coordinates of the drawn rectangle, for the purpose
     of assisting with setting up cameras in OBS Studio / Streamlabs OBS Desktop.
 
+    CHANGELOG:
+    v1.0:
+        - Implemented the program!
+    v1.1:
+        - Fixed the coordinates being offset by the monitor position.
+        - Switched to using the work area instead of the entire screen, since OBS wants window-relative
+            coordinates, not absolute screen coordinates, and the taskbar should be excluded.
+        - As a positive side-effect of previously mentioned fixes, the lines are now drawn in the correct
+            positions on non-primary monitors.
+
     TODO
       - [✓] Prevent flickering
       - [✓] Documentation pass
-      - [ ] Make DPI-independant
       - [ ] Remove as many globalvars as possible
       - [ ] Remove all localpersists
-      - [ ] Verify that OBS needs absolute screen coordinates (should we negate the taskbar from the values?)
 */
 
 // TODO: https://stackoverflow.com/questions/62252362/winapi-how-to-draw-opaque-text-on-a-transparent-window-background
@@ -70,8 +78,8 @@ globalvar POINT G_SelectionStart;
 globalvar POINT G_SelectionEnd;
 globalvar b32 G_SelectionIsValid;
 globalvar HMONITOR G_WindowMonitor;
-globalvar r32 G_MonitorW;
-globalvar r32 G_MonitorH;
+globalvar r32 G_WorkAreaW;
+globalvar r32 G_WorkAreaH;
 
 /// Returns whether the two given points have different X -or- Y coordinates.
 internal b32 ArePointsDifferent(POINT A, POINT B)
@@ -93,21 +101,11 @@ internal void ToggleWindowFullScreen(HWND Window)
             // NOTE: Make the window cover the entire screen
             SetWindowLongA(Window, GWL_STYLE, Style & ~WS_OVERLAPPEDWINDOW);
             SetWindowPos(Window, HWND_TOP,
-                         MonitorInfo.rcMonitor.left, MonitorInfo.rcMonitor.top,
-                         MonitorInfo.rcMonitor.right - MonitorInfo.rcMonitor.left,
-                         MonitorInfo.rcMonitor.bottom - MonitorInfo.rcMonitor.top,
+                         MonitorInfo.rcWork.left, MonitorInfo.rcWork.top,
+                         MonitorInfo.rcWork.right - MonitorInfo.rcWork.left,
+                         MonitorInfo.rcWork.bottom - MonitorInfo.rcWork.top,
                          SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
         }
-        #if 0
-        else
-        {
-            SetWindowLong(Window, GWL_STYLE, Style | WS_OVERLAPPEDWINDOW);
-            SetWindowPlacement(Window, &G_WindowPosition);
-            SetWindowPos(Window, NULL, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-        }
-        #endif
     }
 }
 
@@ -175,7 +173,7 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
     {
         if (G_SelectionIsValid)
         {
-            #if PCG_INTERNAL && 0
+            #if PCG_INTERNAL && 0  // TOGGLE: Enable start/end coordinates for debugging
             // NOTE: Draw start coordinates
             {
                 Gdiplus::RectF StartRect((r32)G_SelectionStart.x - TextBoxW, (r32)G_SelectionStart.y - TextBoxH, TextBoxW, TextBoxH);
@@ -215,7 +213,7 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
 
             // NOTE: Draw distance to right screen edge
             {
-                i32 DistanceValue = (i32)G_MonitorW - G_SelectionEnd.x;
+                i32 DistanceValue = (i32)G_WorkAreaW - G_SelectionEnd.x;
                 r32 X = (r32)(G_SelectionEnd.x + (DistanceValue / 2));
                 r32 Y = (r32)(G_SelectionEnd.y - ((G_SelectionEnd.y - G_SelectionStart.y) / 2));
 
@@ -227,7 +225,7 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
                 // NOTE: Left dashed line
                 Graphics.DrawLine(&DashedPen, G_SelectionEnd.x + LinePadding, (i32)Y, G_SelectionEnd.x + (DistanceValue / 2) - (i32)HalfTextBoxW - LinePadding, (i32)Y);
                 // NOTE: Right dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X + (i32)HalfTextBoxW + LinePadding, (i32)Y, (i32)G_MonitorW - LinePadding, (i32)Y);
+                Graphics.DrawLine(&DashedPen, (i32)X + (i32)HalfTextBoxW + LinePadding, (i32)Y, (i32)G_WorkAreaW - LinePadding, (i32)Y);
             }
 
             // NOTE: Draw distance to top screen edge
@@ -249,9 +247,9 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
 
             // NOTE: Draw distance to bottom screen edge
             {
-                i32 DistanceValue = (i32)G_MonitorH - G_SelectionEnd.y;
+                i32 DistanceValue = (i32)G_WorkAreaH - G_SelectionEnd.y;
                 r32 X = (r32)(G_SelectionStart.x + ((G_SelectionEnd.x - G_SelectionStart.x) / 2));
-                r32 Y = (r32)(G_SelectionEnd.y + ((G_MonitorH - G_SelectionEnd.y) / 2));
+                r32 Y = (r32)(G_SelectionEnd.y + ((G_WorkAreaH - G_SelectionEnd.y) / 2));
 
                 // NOTE: TextBox
                 Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
@@ -259,9 +257,9 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
                 Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
 
                 // NOTE: Top dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X, G_SelectionEnd.y + LinePadding, (i32)X, (i32)G_MonitorH - (DistanceValue / 2) - (i32)HalfTextBoxH - LinePadding);
+                Graphics.DrawLine(&DashedPen, (i32)X, G_SelectionEnd.y + LinePadding, (i32)X, (i32)G_WorkAreaH - (DistanceValue / 2) - (i32)HalfTextBoxH - LinePadding);
                 // NOTE: Bottom dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X, (i32)G_MonitorH - (DistanceValue / 2) + (i32)HalfTextBoxH + LinePadding, (i32)X, (i32)G_MonitorH - LinePadding);
+                Graphics.DrawLine(&DashedPen, (i32)X, (i32)G_WorkAreaH - (DistanceValue / 2) + (i32)HalfTextBoxH + LinePadding, (i32)X, (i32)G_WorkAreaH - LinePadding);
             }
         }
         else
@@ -270,7 +268,7 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
             CenterBottomAligned.SetAlignment(Gdiplus::StringAlignmentCenter);
             CenterBottomAligned.SetLineAlignment(Gdiplus::StringAlignmentFar);
 
-            Gdiplus::RectF InvalidRectRect(0.0f, 0.0f, G_MonitorW, G_MonitorH - 80.0f);
+            Gdiplus::RectF InvalidRectRect(0.0f, 0.0f, G_WorkAreaW, G_WorkAreaH - 80.0f);
             std::wstring InvalidRectText = L"Invalid Rectangle! Must be larger than " + std::to_wstring(MinSize) + L" x " + std::to_wstring(MinSize) + L" pixels";
             Graphics.DrawString(InvalidRectText.c_str(), -1, &Font, InvalidRectRect, &CenterBottomAligned, &EvilTextBrush);
         }
@@ -281,7 +279,7 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
         CenterBottomAligned.SetAlignment(Gdiplus::StringAlignmentCenter);
         CenterBottomAligned.SetLineAlignment(Gdiplus::StringAlignmentFar);
 
-        Gdiplus::RectF InvalidRectRect(0.0f, 0.0f, G_MonitorW, G_MonitorH - 80.0f);
+        Gdiplus::RectF InvalidRectRect(0.0f, 0.0f, G_WorkAreaW, G_WorkAreaH - 80.0f);
         std::wstring InvalidRectText = L"Click and drag to draw a selection, or press [Escape] or [Right Mouse Button] to cancel";
         Graphics.DrawString(InvalidRectText.c_str(), -1, &Font, InvalidRectRect, &CenterBottomAligned, &HintTextBrush);
     }
@@ -319,8 +317,12 @@ internal void Repaint(HWND Window)
     InvalidateRect(Window, 0, TRUE);
 }
 
+// NOTE: Suppress 'unreferenced formal parameter' warning for Window; it is used for Repaint()
+#pragma warning ( push )
+#pragma warning ( disable: 4100 )
 /// Updates the selection rectangle and issues a redraw request if it has changed.
 internal void UpdateSelection(HWND Window)
+#pragma warning ( pop )
 {
     POINT PreviousStart = G_SelectionStart;
     POINT PreviousEnd = G_SelectionEnd;
@@ -351,11 +353,11 @@ internal void UpdateMonitorStats(HWND Window)
     MONITORINFO MonitorInfo = { sizeof(MONITORINFO) };
     if (GetMonitorInfoA(G_WindowMonitor, &MonitorInfo))
     {
-        G_MonitorW = (r32)(MonitorInfo.rcMonitor.right - MonitorInfo.rcMonitor.left);
-        G_MonitorH = (r32)(MonitorInfo.rcMonitor.bottom - MonitorInfo.rcMonitor.top);
+        G_WorkAreaW = (r32)(MonitorInfo.rcWork.right - MonitorInfo.rcWork.left);
+        G_WorkAreaH = (r32)(MonitorInfo.rcWork.bottom - MonitorInfo.rcWork.top);
 
         #if PCG_INTERNAL
-        std::string MonitorStats = "Monitor size: " + std::to_string((i32)G_MonitorW) + " x " + std::to_string((i32)G_MonitorH) + " px\n";
+        std::string MonitorStats = "Monitor size: " + std::to_string((i32)G_WorkAreaW) + " x " + std::to_string((i32)G_WorkAreaH) + " px\n";
         OutputDebugStringA(MonitorStats.c_str());
         #endif
     }
@@ -365,25 +367,6 @@ internal void UpdateMonitorStats(HWND Window)
         OutputDebugStringA("ERROR: Failed to update the monitor stats!\n");
         #endif
     }
-}
-
-/// Returns the final set of values to be displayed to the user.
-internal pcg_cam_result GetResults()
-{
-    // TODO: Re-write!? Should we need to care about getting monitor info here?
-
-    pcg_cam_result Result = { };
-
-    if (G_HasDrawnSelection && G_SelectionIsValid)
-    {
-        Result.IsValid = true;
-        Result.Left = G_SelectionStart.x;
-        Result.Top = G_SelectionStart.y;
-        Result.Right = (i32)G_MonitorW - G_SelectionEnd.x;
-        Result.Bottom = (i32)G_MonitorH - G_SelectionEnd.y;
-    }
-
-    return Result;
 }
 
 /// Updates the window position (for when the window should move to the monitor the cursor is on).
@@ -400,9 +383,9 @@ internal void UpdateWindowPosition(HWND Window)
         {
             // NOTE: Move the window onto the montior the cursor moved to
             SetWindowPos(Window, HWND_TOP,
-                         MonitorInfo.rcMonitor.left, MonitorInfo.rcMonitor.top,
-                         MonitorInfo.rcMonitor.right - MonitorInfo.rcMonitor.left,
-                         MonitorInfo.rcMonitor.bottom - MonitorInfo.rcMonitor.top,
+                         MonitorInfo.rcWork.left, MonitorInfo.rcWork.top,
+                         MonitorInfo.rcWork.right - MonitorInfo.rcWork.left,
+                         MonitorInfo.rcWork.bottom - MonitorInfo.rcWork.top,
                          SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
             G_WindowMonitor = Monitor;
             UpdateMonitorStats(Window);
@@ -485,39 +468,30 @@ LRESULT CALLBACK PcgCamUtilityProcedure(HWND Window, UINT Message, WPARAM WParam
                 G_HasDrawnSelection = true; // TODO: Remove this?
                 UpdateSelection(Window); // NOTE: Needed to ensure G_SelectionIsValid is accurate
 
-                if (G_SelectionIsValid)
+                if (G_HasDrawnSelection && G_SelectionIsValid)
                 {
                     #if PCG_INTERNAL
                     OutputDebugStringA("Selection is valid\n");
                     #endif
 
-                    pcg_cam_result Result = GetResults();
-                    if (Result.IsValid)
-                    {
-                        #if PCG_INTERNAL
-                        OutputDebugStringA("Got results\n");
-                        #endif
+                    i32 Left = G_SelectionStart.x;
+                    i32 Top = G_SelectionStart.y;
+                    i32 Right = (i32)G_WorkAreaW - G_SelectionEnd.x;
+                    i32 Bottom = (i32)G_WorkAreaH - G_SelectionEnd.y;
 
-                        std::string ResultMessage =
-                            "Left:\t  " + std::to_string(Result.Left) +
-                            "\nTop:\t  " + std::to_string(Result.Top) +
-                            "\nRight:\t  " + std::to_string(Result.Right) +
-                            "\nBottom:\t  " + std::to_string(Result.Bottom) +
-                            "                                          "; // NOTE: Widen the box a little
+                    std::string ResultMessage =
+                        "Left:\t  " + std::to_string(Left) +
+                        "\nTop:\t  " + std::to_string(Top) +
+                        "\nRight:\t  " + std::to_string(Right) +
+                        "\nBottom:\t  " + std::to_string(Bottom) +
+                        "                                          "; // NOTE: Widen the box a little
 
-                        // NOTE: Make the window invisible
-                        SetLayeredWindowAttributes(Window, RGB(0, 0, 0), 0, LWA_ALPHA);
+                    // NOTE: Make the window invisible
+                    SetLayeredWindowAttributes(Window, RGB(0, 0, 0), 0, LWA_ALPHA);
 
-                        // NOTE: Show the data to the user
-                        // TODO: Find a way to make this wider?
-                        MessageBox(Window, ResultMessage.c_str(), "PCG Cam Utility Results", MB_OK | MB_TOPMOST);
-                    }
-                    #if PCG_INTERNAL
-                    else
-                    {
-                        OutputDebugStringA("Failed to get results!\n");
-                    }
-                    #endif
+                    // NOTE: Show the data to the user
+                    // TODO: Find a way to make this wider?
+                    MessageBox(Window, ResultMessage.c_str(), "PCG Cam Utility Results", MB_OK | MB_TOPMOST);
 
                     // NOTE: Close the app
                     G_Running = false;
