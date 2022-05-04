@@ -15,6 +15,7 @@ SET Separator=▰  ▰  ▰  ▰  ▰  ▰  ▰  ▰  ▰  ▰  ▰  ▰  ▰  �
 @ECHO.
 @ECHO OFF
 
+SET ProgramVersion=_v1_2
 SET CommonLibraries=user32.lib Gdi32.lib winmm.lib Gdiplus.lib uxtheme.lib
 SET CommonDisableWarnings=-wd4458 -wd4456
 
@@ -31,14 +32,14 @@ IF NOT EXIST ..\build MKDIR ..\build
 IF NOT EXIST ..\build\debug MKDIR ..\build\debug
 PUSHD ..\build\debug
 DEL * /Q > nul 2>&1
-SET DebugCompilerFlags=-nologo -std:c++17 -MTd -Gm- -GR- -EHa- -FePcgCamUtility -FdPcgCamUtility -FoPcgCamUtility -Od -Oi -WX -W4 %CommonDisableWarnings% -DPCG_INTERNAL=1 -DPCG_ATTEMPT_VSYNC=1 -FC -Z7 -Fm
+SET DebugCompilerFlags=-nologo -std:c++17 -MTd -Gm- -GR- -EHa- -FePcgCamUtility%ProgramVersion% -FdPcgCamUtility%ProgramVersion% -FoPcgCamUtility%ProgramVersion% -Od -Oi -WX -W4 %CommonDisableWarnings% -DPCG_INTERNAL=1 -DPCG_ATTEMPT_VSYNC=1 -FC -Z7 -Fm
 @ECHO [95m%Separator%
 @ECHO    Building Debug...
 @ECHO %Separator%[0m
 @ECHO.
 SET !ERRORLEVEL!=1
 cl %DebugCompilerFlags% ..\..\source\win32_pcg_cam.cpp /link -incremental:no -opt:ref %CommonLibraries%
-call ..\..\tools\util\PrintSuccess.bat
+call ..\..\tools\util\PrintSuccess
 POPD
 GOTO :END
 
@@ -47,14 +48,14 @@ IF NOT EXIST ..\build MKDIR ..\build
 IF NOT EXIST ..\build\release MKDIR ..\build\release
 PUSHD ..\build\release
 DEL * /Q > nul 2>&1
-SET DebugCompilerFlags=-nologo -std:c++17 -EHa- -FePcgCamUtility -O2 -Oi -WX -W4 %CommonDisableWarnings% -DPCG_INTERNAL=0 -DPCG_ATTEMPT_VSYNC=1 -FC
+SET DebugCompilerFlags=-nologo -std:c++17 -EHa- -FePcgCamUtility%ProgramVersion% -O2 -Oi -WX -W4 %CommonDisableWarnings% -DPCG_INTERNAL=0 -DPCG_ATTEMPT_VSYNC=1 -FC
 @ECHO [95m%Separator%
 @ECHO    Building Release...
 @ECHO %Separator%[0m
 @ECHO.
 SET !ERRORLEVEL!=1
 cl %DebugCompilerFlags% ..\..\source\win32_pcg_cam.cpp /link -incremental:no -opt:ref %CommonLibraries%
-call ..\..\tools\util\PrintSuccess.bat
+call ..\..\tools\util\PrintSuccess
 POPD
 GOTO :END
 

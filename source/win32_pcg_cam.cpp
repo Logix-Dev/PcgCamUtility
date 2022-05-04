@@ -3,7 +3,7 @@
     File: win32_pcg_cam.cpp
     Date: 02/05/2022
     Creator: Logix
-    Version: 1.1
+    Version: 1.2
     ==========================================================================
 
     This is a simple utility program to select a region of the screen with your cursor
@@ -19,15 +19,18 @@
             coordinates, not absolute screen coordinates, and the taskbar should be excluded.
         - As a positive side-effect of previously mentioned fixes, the lines are now drawn in the correct
             positions on non-primary monitors.
+    v1.2:
+        - Updated drawing routines to position the information within the selection rectangle when it
+            gets too close to the screen edges
+        - The refresh rate will now update on a per-screen basis
 
     TODO
       - [✓] Prevent flickering
       - [✓] Documentation pass
       - [ ] Remove as many globalvars as possible
       - [ ] Remove all localpersists
+      - [ ] https://stackoverflow.com/questions/62252362/winapi-how-to-draw-opaque-text-on-a-transparent-window-background
 */
-
-// TODO: https://stackoverflow.com/questions/62252362/winapi-how-to-draw-opaque-text-on-a-transparent-window-background
 
 #ifdef UNICODE
 #undef UNICODE
@@ -173,15 +176,18 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
     {
         if (G_SelectionIsValid)
         {
-            #if PCG_INTERNAL && 0  // TOGGLE: Enable start/end coordinates for debugging
-            // NOTE: Draw start coordinates
+            POINT Cursor;
+            GetCursorPos(&Cursor);
+
+            #if PCG_INTERNAL && 0 // TOGGLE: Enable start/end coordinates for debugging
+            // DEBUG: Draw start coordinates
             {
                 Gdiplus::RectF StartRect((r32)G_SelectionStart.x - TextBoxW, (r32)G_SelectionStart.y - TextBoxH, TextBoxW, TextBoxH);
                 std::wstring StartCoordinates = std::to_wstring(G_SelectionStart.x) + L", " + std::to_wstring(G_SelectionStart.y);
                 Graphics.DrawString(StartCoordinates.c_str(), -1, &Font, StartRect, &BottomRightAligned, &TextBrush);
             }
 
-            // NOTE: Draw end coordinates
+            // DEBUG: Draw end coordinates
             {
                 Gdiplus::RectF EndRect((r32)G_SelectionEnd.x, (r32)G_SelectionEnd.y, TextBoxW, TextBoxH);
                 std::wstring EndCoordinates = std::to_wstring(G_SelectionEnd.x) + L", " + std::to_wstring(G_SelectionEnd.y);
@@ -196,70 +202,169 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
 
             // NOTE: Draw distance to left screen edge
             {
-                i32 DistanceValue = G_SelectionStart.x;
+                i32 Distance = G_SelectionStart.x;
+
                 r32 X = (r32)(G_SelectionStart.x / 2);
                 r32 Y = (r32)(G_SelectionEnd.y - ((G_SelectionEnd.y - G_SelectionStart.y) / 2));
 
-                // NOTE: TextBox
-                Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
-                std::wstring DistanceString = std::to_wstring(DistanceValue) + L" px";
-                Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                b32 DrewLine = false;
 
                 // NOTE: Left dashed line
-                Graphics.DrawLine(&DashedPen, LinePadding, (i32)Y, (G_SelectionStart.x / 2) - (i32)HalfTextBoxW + LinePadding, (i32)Y);
+                i32 LineStartX = LinePadding;
+                i32 LineEndX = (G_SelectionStart.x / 2) - (i32)HalfTextBoxW + LinePadding;
+                if (LineEndX > LineStartX)
+                {
+                    Graphics.DrawLine(&DashedPen, LineStartX, (i32)Y, LineEndX, (i32)Y);
+                    DrewLine = true;
+                }
+
+                // NOTE: TextBox
+                std::wstring DistanceString = std::to_wstring(Distance) + L" px";
+                if (DrewLine)
+                {
+                    Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
+                else
+                {
+                    Gdiplus::RectF Rect((r32)(LineStartX + LinePadding), Y - HalfTextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
+
                 // NOTE: Right dashed line
-                Graphics.DrawLine(&DashedPen, (G_SelectionStart.x / 2) + (i32)HalfTextBoxW + LinePadding, (i32)Y, G_SelectionStart.x - LinePadding, (i32)Y);
+                LineStartX = (G_SelectionStart.x / 2) + (i32)HalfTextBoxW + LinePadding;
+                LineEndX = G_SelectionStart.x - LinePadding;
+                if (LineEndX > LineStartX)
+                {
+                    Graphics.DrawLine(&DashedPen, LineStartX, (i32)Y, LineEndX, (i32)Y);
+                    DrewLine = true;
+                }
             }
 
             // NOTE: Draw distance to right screen edge
             {
-                i32 DistanceValue = (i32)G_WorkAreaW - G_SelectionEnd.x;
-                r32 X = (r32)(G_SelectionEnd.x + (DistanceValue / 2));
+                i32 Distance = (i32)G_WorkAreaW - G_SelectionEnd.x;
+                i32 HalfDistance = Distance / 2;
+
+                r32 X = (r32)(G_SelectionEnd.x + HalfDistance);
                 r32 Y = (r32)(G_SelectionEnd.y - ((G_SelectionEnd.y - G_SelectionStart.y) / 2));
 
-                // NOTE: TextBox
-                Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
-                std::wstring DistanceString = std::to_wstring(DistanceValue) + L" px";
-                Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                b32 DrewLine = false;
 
                 // NOTE: Left dashed line
-                Graphics.DrawLine(&DashedPen, G_SelectionEnd.x + LinePadding, (i32)Y, G_SelectionEnd.x + (DistanceValue / 2) - (i32)HalfTextBoxW - LinePadding, (i32)Y);
+                i32 LineStartX = G_SelectionEnd.x + LinePadding;
+                i32 LineEndX = G_SelectionEnd.x + HalfDistance - (i32)HalfTextBoxW - LinePadding;
+                if (LineEndX > LineStartX)
+                {
+                    Graphics.DrawLine(&DashedPen, LineStartX, (i32)Y, LineEndX, (i32)Y);
+                    DrewLine = true;
+                }
+
                 // NOTE: Right dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X + (i32)HalfTextBoxW + LinePadding, (i32)Y, (i32)G_WorkAreaW - LinePadding, (i32)Y);
+                LineStartX = (i32)X + (i32)HalfTextBoxW + LinePadding;
+                LineEndX = (i32)G_WorkAreaW - LinePadding;
+                if (LineEndX > LineStartX)
+                {
+                    Graphics.DrawLine(&DashedPen, LineStartX, (i32)Y, LineEndX, (i32)Y);
+                    DrewLine = true;
+                }
+
+                // NOTE: TextBox
+                std::wstring DistanceString = std::to_wstring(Distance) + L" px";
+                if (DrewLine)
+                {
+                    Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
+                else
+                {
+                    Gdiplus::RectF Rect((r32)(Cursor.x - LinePadding) - TextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
             }
 
             // NOTE: Draw distance to top screen edge
             {
-                i32 DistanceValue = G_SelectionStart.y;
+                i32 Distance = G_SelectionStart.y;
+                i32 HalfDistance = Distance / 2;
+
                 r32 X = (r32)(G_SelectionStart.x + ((G_SelectionEnd.x - G_SelectionStart.x) / 2));
                 r32 Y = (r32)(G_SelectionStart.y / 2);
 
-                // NOTE: TextBox
-                Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
-                std::wstring DistanceString = std::to_wstring(DistanceValue) + L" px";
-                Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                b32 DrewLine = false;
 
                 // NOTE: Top dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X, LinePadding, (i32)X, (DistanceValue / 2) - LinePadding - (i32)HalfTextBoxH);
+                i32 LineStartY = LinePadding;
+                i32 LineEndY = HalfDistance - LinePadding - (i32)HalfTextBoxH;
+                if (LineEndY > LineStartY)
+                {
+                    Graphics.DrawLine(&DashedPen, (i32)X, LineStartY, (i32)X, LineEndY);
+                    DrewLine = true;
+                }
+
+                // NOTE: TextBox
+                std::wstring DistanceString = std::to_wstring(Distance) + L" px";
+                if (DrewLine)
+                {
+                    Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
+                else
+                {
+                    Gdiplus::RectF Rect(X - HalfTextBoxW, (r32)(LineStartY + LinePadding), TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
+
                 // NOTE: Bottom dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X, (DistanceValue / 2) + LinePadding + (i32)HalfTextBoxH, (i32)X, DistanceValue - LinePadding);
+                LineStartY = HalfDistance + LinePadding + (i32)HalfTextBoxH;
+                LineEndY = Distance - LinePadding;
+                if (LineEndY > LineStartY)
+                {
+                    Graphics.DrawLine(&DashedPen, (i32)X, LineStartY, (i32)X, LineEndY);
+                    DrewLine = true;
+                }
             }
 
             // NOTE: Draw distance to bottom screen edge
             {
-                i32 DistanceValue = (i32)G_WorkAreaH - G_SelectionEnd.y;
+                i32 Distance = (i32)G_WorkAreaH - G_SelectionEnd.y;
+                i32 HalfDistance = Distance / 2;
+
                 r32 X = (r32)(G_SelectionStart.x + ((G_SelectionEnd.x - G_SelectionStart.x) / 2));
                 r32 Y = (r32)(G_SelectionEnd.y + ((G_WorkAreaH - G_SelectionEnd.y) / 2));
 
-                // NOTE: TextBox
-                Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
-                std::wstring DistanceString = std::to_wstring(DistanceValue) + L" px";
-                Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                b32 DrewLine = false;
 
                 // NOTE: Top dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X, G_SelectionEnd.y + LinePadding, (i32)X, (i32)G_WorkAreaH - (DistanceValue / 2) - (i32)HalfTextBoxH - LinePadding);
+                i32 LineStartY = G_SelectionEnd.y + LinePadding;
+                i32 LineEndY = (i32)G_WorkAreaH - HalfDistance - (i32)HalfTextBoxH - LinePadding;
+                if (LineEndY > LineStartY)
+                {
+                    Graphics.DrawLine(&DashedPen, (i32)X, LineStartY, (i32)X, LineEndY);
+                    DrewLine = true;
+                }
+
                 // NOTE: Bottom dashed line
-                Graphics.DrawLine(&DashedPen, (i32)X, (i32)G_WorkAreaH - (DistanceValue / 2) + (i32)HalfTextBoxH + LinePadding, (i32)X, (i32)G_WorkAreaH - LinePadding);
+                LineStartY = (i32)G_WorkAreaH - HalfDistance + (i32)HalfTextBoxH + LinePadding;
+                LineEndY = (i32)G_WorkAreaH - LinePadding;
+                if (LineEndY > LineStartY)
+                {
+                    Graphics.DrawLine(&DashedPen, (i32)X, LineStartY, (i32)X, LineEndY);
+                    DrewLine = true;
+                }
+
+                // NOTE: TextBox
+                std::wstring DistanceString = std::to_wstring(Distance) + L" px";
+                if (DrewLine)
+                {
+                    Gdiplus::RectF Rect(X - HalfTextBoxW, Y - HalfTextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
+                else
+                {
+                    Gdiplus::RectF Rect(X - HalfTextBoxW, (r32)(Cursor.y - LinePadding) - TextBoxH, TextBoxW, TextBoxH);
+                    Graphics.DrawString(DistanceString.c_str(), -1, &Font, Rect, &CenterAligned, &TextBrush);
+                }
             }
         }
         else
@@ -282,33 +387,6 @@ internal void PaintSelection(HDC DeviceContext, rect2i Start, rect2i End)
         Gdiplus::RectF InvalidRectRect(0.0f, 0.0f, G_WorkAreaW, G_WorkAreaH - 80.0f);
         std::wstring InvalidRectText = L"Click and drag to draw a selection, or press [Escape] or [Right Mouse Button] to cancel";
         Graphics.DrawString(InvalidRectText.c_str(), -1, &Font, InvalidRectRect, &CenterBottomAligned, &HintTextBrush);
-    }
-}
-
-internal void Paint(HDC &DeviceContext, RECT ClientRect)
-{
-    // NOTE: Draw the translucent window background
-    localpersist HBRUSH WindowBGBrush = CreateSolidBrush(RGB(20, 20, 20));
-    FillRect(DeviceContext, &ClientRect, WindowBGBrush);
-
-    if (G_IsDrawingSelection)
-    {
-        // NOTE: Draw the selection rectangle outline
-        rect2i Start;
-        Start.X = Min(G_SelectionStart.x, G_SelectionEnd.x);
-        Start.Y = Min(G_SelectionStart.y, G_SelectionEnd.y);
-
-        rect2i End;
-        End.X = Max(G_SelectionStart.x, G_SelectionEnd.x);
-        End.Y = Max(G_SelectionStart.y, G_SelectionEnd.y);
-
-        PaintSelection(DeviceContext, Start, End);
-    }
-    else
-    {
-        rect2i Start = { };
-        rect2i End = { };
-        PaintSelection(DeviceContext, Start, End);
     }
 }
 
@@ -359,6 +437,25 @@ internal void UpdateMonitorStats(HWND Window)
         #if PCG_INTERNAL
         std::string MonitorStats = "Monitor size: " + std::to_string((i32)G_WorkAreaW) + " x " + std::to_string((i32)G_WorkAreaH) + " px\n";
         OutputDebugStringA(MonitorStats.c_str());
+        #endif
+
+        #if PCG_ATTEMPT_VSYNC
+        // NOTE: Attempt to make the program refresh in time with V-Sync (this is not *ACTUALLY* V-Sync, only an approximation!)
+        i32 MonitorRefreshHz = 60;
+        HDC RefreshDC = GetDC(Window);
+        i32 Win32RefreshRate = GetDeviceCaps(RefreshDC, VREFRESH);
+        ReleaseDC(Window, RefreshDC);
+        if (Win32RefreshRate > 1)
+        {
+            MonitorRefreshHz = Win32RefreshRate;
+        }
+
+        SetTimer(Window, 999, 1000 / MonitorRefreshHz, NULL);
+
+        #if PCG_INTERNAL
+        std::string RefreshRateMessage = "Monitor refresh rate: " + std::to_string(MonitorRefreshHz) + "\n";
+        OutputDebugStringA(RefreshRateMessage.c_str());
+        #endif
         #endif
     }
     else
@@ -555,7 +652,31 @@ LRESULT CALLBACK PcgCamUtilityProcedure(HWND Window, UINT Message, WPARAM WParam
             // NOTE: Thanks to https://stackoverflow.com/a/51330038/11878570 for this solution (removes the flickering with GDI+)
             HDC MemDC;
             HPAINTBUFFER Buffer = BeginBufferedPaint(DeviceContext, &ClientRect, BPBF_COMPATIBLEBITMAP, NULL, &MemDC);
-            Paint(MemDC, ClientRect);
+
+            // NOTE: Draw the translucent window background
+            localpersist HBRUSH WindowBGBrush = CreateSolidBrush(RGB(20, 20, 20));
+            FillRect(MemDC, &ClientRect, WindowBGBrush);
+
+            if (G_IsDrawingSelection)
+            {
+                // NOTE: Draw the selection rectangle outline
+                rect2i Start;
+                Start.X = Min(G_SelectionStart.x, G_SelectionEnd.x);
+                Start.Y = Min(G_SelectionStart.y, G_SelectionEnd.y);
+
+                rect2i End;
+                End.X = Max(G_SelectionStart.x, G_SelectionEnd.x);
+                End.Y = Max(G_SelectionStart.y, G_SelectionEnd.y);
+
+                PaintSelection(MemDC, Start, End);
+            }
+            else
+            {
+                rect2i Start = { };
+                rect2i End = { };
+                PaintSelection(MemDC, Start, End);
+            }
+
             EndBufferedPaint(Buffer, TRUE);
 
             EndPaint(Window, &PaintStruct);
@@ -590,11 +711,11 @@ i32 WinMain(HINSTANCE Instance, [[maybe_unused]] HINSTANCE PrevInstance, [[maybe
     // NOTE: WS_EX_LAYERED allows the window to be translucent
     // NOTE: WS_EX_TOOLWINDOW hides the window from the taskbar
     HWND Window = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOOLWINDOW,
-                              WindowClass.lpszClassName,
-                              "PCG Camera Utility",
-                              WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                              CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                              NULL, NULL, Instance, NULL);
+                                  WindowClass.lpszClassName,
+                                  "PCG Camera Utility",
+                                  WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                  NULL, NULL, Instance, NULL);
     if (!Window)
     {
         OutputDebugStringA("Failed to create the window!\n");
@@ -612,20 +733,6 @@ i32 WinMain(HINSTANCE Instance, [[maybe_unused]] HINSTANCE PrevInstance, [[maybe
 
     // NOTE: Get monitor info
     UpdateMonitorStats(Window);
-
-    #if PCG_ATTEMPT_VSYNC
-    // NOTE: Attempt to make the program refresh in time with V-Sync (this is not *ACTUALLY* V-Sync, only an approximation!)
-    i32 MonitorRefreshHz = 60;
-    HDC RefreshDC = GetDC(Window);
-    i32 Win32RefreshRate = GetDeviceCaps(RefreshDC, VREFRESH);
-    ReleaseDC(Window, RefreshDC);
-    if (Win32RefreshRate > 1)
-    {
-        MonitorRefreshHz = Win32RefreshRate;
-    }
-
-    SetTimer(Window, 999, 1000 / MonitorRefreshHz, NULL);
-    #endif
 
     // NOTE: Program loop
     G_Running = true;
